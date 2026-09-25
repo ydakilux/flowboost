@@ -1,0 +1,33 @@
+<Window x:Class="flowboost.Views.DeviceCodeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sign in to GitHub Copilot" Width="500" Height="500" MinWidth="440" MinHeight="460"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize" UseLayoutRounding="True">
+    <Window.Resources>
+        <ResourceDictionary><ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary Source="/flowboost;component/Views/Themes/Light.xaml" />
+        </ResourceDictionary.MergedDictionaries></ResourceDictionary>
+    </Window.Resources>
+    <Grid Margin="26">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,18">
+            <TextBlock Text="Sign in to GitHub Copilot" FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Text="Use a one-time code to connect flowboost to your Copilot account." Foreground="{DynamicResource MutedForeground}" TextWrapping="Wrap" Margin="0,5,0,0" />
+        </StackPanel>
+        <Border Grid.Row="1" Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="18">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="1. Copy this one-time code" FontWeight="SemiBold" />
+                <TextBox x:Name="UserCodeText" IsReadOnly="True" IsTabStop="True" FontSize="25" FontWeight="SemiBold" TextAlignment="Center" Padding="10,8" Margin="0,9,0,12" AutomationProperties.Name="One-time sign-in code" />
+                <Button x:Name="CopyCodeButton" Content="Copy code" Style="{StaticResource QuietButton}" HorizontalAlignment="Left" Click="CopyCode_Click" IsEnabled="False" />
+                <TextBlock Text="2. Open the page below and enter the code" FontWeight="SemiBold" Margin="0,18,0,7" />
+                <TextBlock x:Name="VerificationUrlText" Text="https://github.com/login/device" Foreground="{DynamicResource MutedForeground}" TextWrapping="Wrap" AutomationProperties.Name="Device sign-in page" />
+                <Button x:Name="OpenBrowserButton" Content="Open GitHub device sign-in" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="OpenBrowser_Click" IsEnabled="False" />
+                <TextBlock x:Name="StatusText" Text="Preparing your sign-in code…" Foreground="{DynamicResource MutedForeground}" TextWrapping="Wrap" Margin="0,13,0,0" AutomationProperties.LiveSetting="Polite" />
+                <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,8,0,0" AutomationProperties.LiveSetting="Assertive" />
+            </StackPanel>
+          </ScrollViewer>
+        </Border>
+        <Button Grid.Row="2" Content="Cancel" Style="{StaticResource QuietButton}" HorizontalAlignment="Right" Margin="0,16,0,0" Click="Cancel_Click" IsCancel="True" />
+    </Grid>
+</Window>
