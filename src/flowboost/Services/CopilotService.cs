@@ -49,7 +49,9 @@ public sealed class CopilotService : IAsyncDisposable
         finally { _lifecycle.Release(); }
     }
 
-    public async Task<ChatSession> CreateSessionAsync(Preset p)
+    public Task<ChatSession> CreateSessionAsync(Preset p) => CreateSessionAsync(p, _settings.Current.Model);
+
+    public async Task<ChatSession> CreateSessionAsync(Preset p, string modelOverride)
     {
         await _lifecycle.WaitAsync().ConfigureAwait(false);
         try
@@ -57,7 +59,7 @@ public sealed class CopilotService : IAsyncDisposable
             if (_stopped) throw new ObjectDisposedException(nameof(CopilotService));
             if (string.IsNullOrWhiteSpace(_auth.AccessToken)) throw new NotAuthenticatedException();
             var client = await GetClientAsync().ConfigureAwait(false);
-            var config = CreateSessionConfig(p);
+            var config = CreateSessionConfig(p, modelOverride);
             GitHub.Copilot.CopilotSession sdkSession;
             try { sdkSession = await client.CreateSessionAsync(config).ConfigureAwait(false); }
             catch (Exception ex) when (IsAuthenticationRejection(ex))
@@ -65,7 +67,7 @@ public sealed class CopilotService : IAsyncDisposable
                 _auth.MarkSavedSignInRejected();
                 throw new InvalidOperationException(SavedSignInRejectedMessage);
             }
-            var result = new ChatSession(p.Name, _settings.Current.Model, sdkSession, _dispatcher,
+            var result = new ChatSession(p.Name, modelOverride, sdkSession, _dispatcher,
                 session => DeleteSessionAsync(client, session), _auth.MarkSavedSignInRejected);
             lock (_sessionsLock) _sessions.Add(result);
             return result;
@@ -179,9 +181,9 @@ public sealed class CopilotService : IAsyncDisposable
     private static void LogConnectionRecoveryFailure() =>
         AppLog.Write("Copilot models.list connection recovery failed");
 
-    private static SessionConfig CreateSessionConfig(Preset p) => new()
+    private static SessionConfig CreateSessionConfig(Preset p, string model) => new()
     {
-        Model = App.Current.Settings.Current.Model,
+        Model = model,
         Streaming = true,
         SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Replace, Content = $"You are a concise assistant. Respond in {p.ResponseLanguage}. Format with Markdown." },
         InfiniteSessions = new() { Enabled = false },

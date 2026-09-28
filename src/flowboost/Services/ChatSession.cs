@@ -1,11 +1,22 @@
 using System.Windows.Threading;
+using System.Text.RegularExpressions;
 using GitHub.Copilot;
 
 namespace flowboost.Services;
 
+public enum ChatErrorKind { ModelUnavailable, SignInExpired, Other }
+
+public sealed record ChatError(ChatErrorKind Kind, string Message, string? Model);
+
 public sealed class ChatSession : IAsyncDisposable
 {
     private const string SavedSignInRejectedMessage = "Your GitHub sign-in has expired. Sign in again from Settings.";
+    private const string ModelUnavailableMessage = "isn't responding right now (GitHub reported a service problem). Try again in a moment or switch to another model.";
+    private static readonly string[] ModelUnavailableIndicators =
+    [
+        "Failed to get response from the AI model", "503", "502", "504", "currently experiencing issues",
+        "model is unavailable", "overloaded", "rate limit", "429"
+    ];
     private readonly CopilotSession _session;
     private readonly Dispatcher _dispatcher;
     private readonly Func<ChatSession, Task> _deleteFromClient;
@@ -23,16 +34,19 @@ public sealed class ChatSession : IAsyncDisposable
     private bool _closing;
     private bool _isBusy;
     private string _answer = "";
+    private string? _lastPrompt;
     public string PresetName { get; }
     public string Model { get; }
+    public string? LastPrompt { get { lock (_stateLock) return _lastPrompt; } private set { lock (_stateLock) _lastPrompt = value; } }
     public bool IsBusy { get { lock (_stateLock) return _isBusy; } private set { lock (_stateLock) _isBusy = value; } }
     internal string SessionId => _session.SessionId;
     internal event Action<ChatSession>? Disposed;
     public event Action<string>? Delta;
     public event Action<string>? Completed;
-    public event Action<string>? Error;
+    public event Action<ChatError>? Error;
     public event Action? Idle;
     public event Action? StateChanged;
+    public event Action? Aborted;
 
     internal ChatSession(string presetName, string model, CopilotSession session, Dispatcher dispatcher, Func<ChatSession, Task> deleteFromClient, Action markSavedSignInRejected)
     {
@@ -52,13 +66,9 @@ public sealed class ChatSession : IAsyncDisposable
         {
             if (IsClosing) return;
             AppLog.WriteSessionErrorEvent();
-            var message = e.Data.Message;
-            if (message.Contains("No GitHub OAuth token", StringComparison.OrdinalIgnoreCase))
-            {
-                _markSavedSignInRejected();
-                message = SavedSignInRejectedMessage;
-            }
-            SetBusy(false); Error?.Invoke(message);
+            var error = ClassifyError(e.Data.Message, Model);
+            if (error.Kind == ChatErrorKind.SignInExpired) _markSavedSignInRejected();
+            SetBusy(false); Error?.Invoke(error);
         });
         _idleHandler = _ => Dispatch(() =>
         {
@@ -77,6 +87,7 @@ public sealed class ChatSession : IAsyncDisposable
             if (_isBusy) throw new InvalidOperationException("A response is already in progress.");
             _isBusy = true;
             _answer = "";
+            _lastPrompt = text;
         }
         await RaiseStateChangedAsync().ConfigureAwait(false);
         try { await _session.SendAsync(new MessageOptions { Prompt = text }).ConfigureAwait(false); }
@@ -90,7 +101,24 @@ public sealed class ChatSession : IAsyncDisposable
 
     public async Task AbortAsync()
     {
-        if (!IsClosing && IsBusy) await _session.AbortAsync().ConfigureAwait(false);
+        if (IsClosing || !IsBusy) return;
+        try { await _session.AbortAsync().ConfigureAwait(false); }
+        catch (Exception ex) { AppLog.Write("Session abort failed", ex); }
+        SetBusy(false);
+        await _dispatcher.InvokeAsync(() => { if (!IsClosing) Aborted?.Invoke(); }).Task.ConfigureAwait(false);
+    }
+
+    internal static ChatError ClassifyError(string rawMessage, string model)
+    {
+        if (rawMessage.Contains("No GitHub OAuth token", StringComparison.OrdinalIgnoreCase))
+            return new ChatError(ChatErrorKind.SignInExpired, SavedSignInRejectedMessage, model);
+
+        if (ModelUnavailableIndicators.Any(indicator => rawMessage.Contains(indicator, StringComparison.OrdinalIgnoreCase)))
+            return new ChatError(ChatErrorKind.ModelUnavailable, $"{model} {ModelUnavailableMessage}", model);
+
+        var cleaned = Regex.Replace(rawMessage, @"\s*\(Request-ID\b[^)]*\)", "", RegexOptions.IgnoreCase).Trim();
+        if (cleaned.Length > 400) cleaned = cleaned[..400];
+        return new ChatError(ChatErrorKind.Other, cleaned, model);
     }
 
     private bool IsClosing { get { lock (_stateLock) return _closing; } }

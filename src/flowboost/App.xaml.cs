@@ -195,7 +195,7 @@ public partial class App : System.Windows.Application
                 return;
             }
             var selection = capture.Text!;
-            popup = new PopupWindow(preset.Name, Settings.Current.Model, selection);
+            popup = new PopupWindow(preset, Settings.Current.Model, selection);
             _popups.Add(popup);
             popup.Closed += (_, _) => _popups.Remove(popup);
             popup.ShowNearCursor();
@@ -211,7 +211,7 @@ public partial class App : System.Windows.Application
                 }
 
                 popup.AttachSession(session);
-                await session.SendAsync(preset.Prompt + "\n\n---\n" + selection);
+                await popup.StartTurnAsync(preset.Prompt + "\n\n---\n" + selection);
             }
             catch (Exception ex)
             {

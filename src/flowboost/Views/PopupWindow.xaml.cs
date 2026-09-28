@@ -17,6 +17,7 @@ public partial class PopupWindow : Window
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _busyTimer;
     private readonly DispatcherTimer _statusTimer;
+    private readonly DispatcherTimer _elapsedTimer;
     private readonly List<MarkdownScrollViewer> _answers = [];
     private MarkdownScrollViewer? _activeAnswer;
     private string _pendingMarkdown = string.Empty;
@@ -27,19 +28,37 @@ public partial class PopupWindow : Window
     private bool _hasResponseFinished;
     private bool _isTurnActive;
     private bool _hasTurnError;
+    private bool _wasAborted;
     private int _busyFrame;
+    private int _elapsedSeconds;
+    private Preset? _preset;
+    private readonly string _initialPrompt;
+    private string? _lastPrompt;
+    private bool _isRetrying;
     public bool IsClosing => _closing || (_hasShown && !IsVisible);
 
     public PopupWindow(ChatSession session, string initialSelectionPreview)
-        : this(session.PresetName, session.Model, initialSelectionPreview)
+        : this(session.PresetName, session.Model, initialSelectionPreview, null)
     {
         AttachSession(session);
     }
 
     public PopupWindow(string presetName, string model, string initialSelectionPreview)
+        : this(presetName, model, initialSelectionPreview, null)
+    {
+    }
+
+    public PopupWindow(Preset preset, string model, string initialSelectionPreview)
+        : this(preset.Name, model, initialSelectionPreview, preset)
+    {
+    }
+
+    private PopupWindow(string presetName, string model, string initialSelectionPreview, Preset? preset)
     {
         InitializeComponent();
         var app = (flowboost.App)System.Windows.Application.Current;
+        _preset = preset;
+        _initialPrompt = preset is null ? string.Empty : preset.Prompt + "\n\n---\n" + initialSelectionPreview;
         ViewTheme.Apply(this, app.Settings.Current.Theme);
         PresetTitle.Text = presetName;
         ModelLabel.Text = model;
@@ -54,6 +73,8 @@ public partial class PopupWindow : Window
         _busyTimer.Tick += AnimateBusyIndicator;
         _statusTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _statusTimer.Tick += HideCompletedStatus;
+        _elapsedTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        _elapsedTimer.Tick += UpdateElapsedStatus;
         SetHeaderStatus("Connecting…", true);
         _isTurnActive = true;
         PreviewKeyDown += OnPreviewKeyDown;
@@ -65,6 +86,7 @@ public partial class PopupWindow : Window
     public PopupWindow(string presetName, string errorMessage, bool showOpenSettings)
     {
         InitializeComponent();
+        _initialPrompt = string.Empty;
         ViewTheme.Apply(this, ((flowboost.App)System.Windows.Application.Current).Settings.Current.Theme);
         PresetTitle.Text = string.IsNullOrWhiteSpace(presetName) ? "flowboost" : presetName;
         ModelLabel.Text = string.Empty;
@@ -82,6 +104,7 @@ public partial class PopupWindow : Window
         _renderTimer = new DispatcherTimer();
         _busyTimer = new DispatcherTimer();
         _statusTimer = new DispatcherTimer();
+        _elapsedTimer = new DispatcherTimer();
         PreviewKeyDown += OnPreviewKeyDown;
         Activated += OnPopupActivated;
         Closed += OnClosed;
@@ -103,20 +126,29 @@ public partial class PopupWindow : Window
         }
 
         _session = session;
+        _isReady = false;
         session.Delta += OnDelta;
         session.Completed += OnCompleted;
         session.Error += OnError;
+        session.Aborted += OnAborted;
         session.Idle += OnIdle;
         session.StateChanged += OnSessionStateChanged;
         _isReady = true;
         if (session.IsBusy)
         {
             _isTurnActive = true;
+            StartElapsedTimer();
             SetHeaderStatus("Waiting…", true);
         }
         UpdateSessionControls(session.IsBusy);
         CopyButton.IsEnabled = !string.IsNullOrEmpty(_lastAnswer);
         if (!session.IsBusy) FocusComposerSoon();
+    }
+
+    public Task StartTurnAsync(string fullPrompt)
+    {
+        _lastPrompt = fullPrompt;
+        return SendTurnAsync(fullPrompt, showUserMessage: false);
     }
 
     public void ShowNearCursor()
@@ -177,6 +209,8 @@ public partial class PopupWindow : Window
     {
         if (_closing) return;
         _isTurnActive = true;
+        StartElapsedTimer();
+        _wasAborted = false;
         SetHeaderStatus("Responding…", true);
         EnsureAnswerViewer();
         _pendingMarkdown += text;
@@ -191,7 +225,9 @@ public partial class PopupWindow : Window
         _lastAnswer = answer;
         _hasResponseFinished = true;
         _isTurnActive = false;
+        ResetElapsedTimer();
         _hasTurnError = false;
+        _wasAborted = false;
         ErrorLabel.Visibility = Visibility.Collapsed;
         SetHeaderStatus("Done", false, autoHide: true);
         EnsureAnswerViewer();
@@ -203,28 +239,70 @@ public partial class PopupWindow : Window
         FocusComposerSoon(ignoreBusy: true);
     }
 
-    private void OnError(string message)
+    private void OnError(ChatError error)
+    {
+        if (_closing) return;
+        _hasResponseFinished = true;
+        _isTurnActive = false;
+        ResetElapsedTimer();
+        _hasTurnError = true;
+        _renderTimer.Stop();
+        _activeAnswer = null;
+        ErrorLabel.Text = error.Message;
+        ErrorLabel.Visibility = Visibility.Visible;
+        OpenSettingsButton.Visibility = error.Kind == ChatErrorKind.SignInExpired ? Visibility.Visible : Visibility.Collapsed;
+        ModelRetryPanel.Visibility = error.Kind == ChatErrorKind.ModelUnavailable && _preset is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (ModelRetryPanel.Visibility == Visibility.Visible) _ = LoadModelsAsync(error.Model ?? ModelLabel.Text);
+        UpdateSessionControls(_session?.IsBusy == true);
+        HideHeaderStatus();
+    }
+
+    public void ShowError(string message)
     {
         if (_closing) return;
         _hasResponseFinished = true;
         _isTurnActive = false;
         _hasTurnError = true;
-        _renderTimer.Stop();
-        _activeAnswer = null;
+        ResetElapsedTimer();
         ErrorLabel.Text = message;
         ErrorLabel.Visibility = Visibility.Visible;
+        OpenSettingsButton.Visibility = Visibility.Collapsed;
+        ModelRetryPanel.Visibility = Visibility.Collapsed;
         UpdateSessionControls(_session?.IsBusy == true);
         HideHeaderStatus();
     }
 
-    public void ShowError(string message) => OnError(message);
+    private async Task LoadModelsAsync(string failedModel)
+    {
+        if (_preset is null || _closing) return;
+        ModelComboBox.Items.Clear();
+        ModelListStatus.Visibility = Visibility.Collapsed;
+        var app = (flowboost.App)System.Windows.Application.Current;
+        IReadOnlyList<string> models;
+        try { models = await app.Copilot.ListModelsAsync(); }
+        catch (Exception)
+        {
+            models = [failedModel];
+            ModelListStatus.Text = "Couldn't load model list";
+            ModelListStatus.Visibility = Visibility.Visible;
+        }
+        if (_closing || ModelRetryPanel.Visibility != Visibility.Visible) return;
+        var uniqueModels = models.Where(model => !string.IsNullOrWhiteSpace(model)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (uniqueModels.Count == 0) uniqueModels.Add(failedModel);
+        foreach (var model in uniqueModels) ModelComboBox.Items.Add(model);
+        var preferred = uniqueModels.FirstOrDefault(model => !string.Equals(model, failedModel, StringComparison.OrdinalIgnoreCase));
+        ModelComboBox.SelectedItem = preferred ?? uniqueModels[0];
+        RetryModelButton.IsEnabled = _session is not null;
+    }
 
     private void OnIdle()
     {
         if (_closing) return;
         _hasResponseFinished = true;
         _isTurnActive = false;
+        ResetElapsedTimer();
         UpdateSessionControls(false);
+        if (_wasAborted) return;
         if (_hasTurnError) HideHeaderStatus();
         else
         {
@@ -241,6 +319,7 @@ public partial class PopupWindow : Window
         {
             _hasResponseFinished = false;
             _isTurnActive = true;
+            if (!_elapsedTimer.IsEnabled) StartElapsedTimer();
             CopyButton.IsEnabled = false;
         }
         UpdateSessionControls(busy);
@@ -263,14 +342,19 @@ public partial class PopupWindow : Window
         ComposerBorder.Background = (System.Windows.Media.Brush)FindResource(canCompose ? "PanelAltBackground" : "PanelBackground");
         ComposerBorder.Opacity = canCompose ? 1 : 0.72;
         CopyButton.IsEnabled = _isReady && !string.IsNullOrEmpty(_lastAnswer);
+        StopButton.Visibility = sessionBusy && !_hasResponseFinished ? Visibility.Visible : Visibility.Collapsed;
         if (sessionBusy && _isTurnActive)
         {
-            SetHeaderStatus(_activeAnswer is null ? "Waiting…" : "Responding…", true);
+            if (_elapsedSeconds < 15) SetHeaderStatus(_activeAnswer is null ? "Waiting…" : "Responding…", true);
         }
         else if (!sessionBusy && _hasResponseFinished)
         {
             _isTurnActive = false;
-            if (HeaderStatusLabel.Text != "Done") SetHeaderStatus("Done", false, autoHide: true);
+            if (_wasAborted)
+            {
+                if (HeaderStatusLabel.Text != "Stopped") SetHeaderStatus("Stopped", false, autoHide: true);
+            }
+            else if (HeaderStatusLabel.Text != "Done") SetHeaderStatus("Done", false, autoHide: true);
         }
     }
 
@@ -320,25 +404,161 @@ public partial class PopupWindow : Window
         await SendTurnAsync(question);
     }
 
-    private async Task SendTurnAsync(string question)
+    private async Task SendTurnAsync(string question, bool showUserMessage = true, bool preserveStatus = false)
     {
         if (!_isReady || _session is null || _session.IsBusy || string.IsNullOrWhiteSpace(question)) return;
         ErrorLabel.Visibility = Visibility.Collapsed;
+        OpenSettingsButton.Visibility = Visibility.Collapsed;
+        ModelRetryPanel.Visibility = Visibility.Collapsed;
+        if (!preserveStatus) RetryStatusLine.Visibility = Visibility.Collapsed;
         _hasResponseFinished = false;
         _isTurnActive = true;
+        _wasAborted = false;
+        _lastPrompt = question;
+        StartElapsedTimer();
         _hasTurnError = false;
         _pendingMarkdown = string.Empty;
-        var userTurn = new TextBlock { Text = question, TextWrapping = TextWrapping.Wrap, Foreground = (System.Windows.Media.Brush)FindResource("Foreground"), Background = (System.Windows.Media.Brush)FindResource("PanelAltBackground"), Padding = new Thickness(10), Margin = new Thickness(48, 0, 0, 10), HorizontalAlignment = System.Windows.HorizontalAlignment.Right, MaxWidth = 520 };
-        ConversationPanel.Children.Add(userTurn);
-        FollowupBox.Clear();
+        if (showUserMessage)
+        {
+            var userTurn = new TextBlock { Text = question, TextWrapping = TextWrapping.Wrap, Foreground = (System.Windows.Media.Brush)FindResource("Foreground"), Background = (System.Windows.Media.Brush)FindResource("PanelAltBackground"), Padding = new Thickness(10), Margin = new Thickness(48, 0, 0, 10), HorizontalAlignment = System.Windows.HorizontalAlignment.Right, MaxWidth = 520 };
+            ConversationPanel.Children.Add(userTurn);
+            FollowupBox.Clear();
+        }
         _activeAnswer = null;
         _isTurnActive = true;
         SetHeaderStatus("Waiting…", true);
         UpdateSessionControls(true);
         ConversationScroll.ScrollToEnd();
         try { await _session.SendAsync(question); }
-        catch (Exception ex) { OnError(ex.Message); }
+        catch (Exception ex) { ShowError(ex.Message); }
     }
+
+    private async Task LoadModelsAndRetryAsync()
+    {
+        if (_closing || _isRetrying || _preset is null || ModelComboBox.SelectedItem is not string chosenModel) return;
+        var app = (flowboost.App)System.Windows.Application.Current;
+        var prompt = _lastPrompt ?? _session?.LastPrompt ?? _initialPrompt;
+        if (string.IsNullOrWhiteSpace(prompt)) return;
+        _isRetrying = true;
+        ModelRetryPanel.IsEnabled = false;
+        RetryStatusLine.Visibility = Visibility.Collapsed;
+        ErrorLabel.Visibility = Visibility.Collapsed;
+        ModelRetryPanel.Visibility = Visibility.Collapsed;
+        OpenSettingsButton.Visibility = Visibility.Collapsed;
+        var previous = _session;
+        DetachSession(previous);
+        _session = null;
+        _isReady = false;
+        UpdateSessionControls(false);
+        try
+        {
+            if (previous is not null) await DisposeSessionSafelyAsync(previous);
+            if (_closing) return;
+            var session = await app.Copilot.CreateSessionAsync(_preset, chosenModel);
+            if (_closing)
+            {
+                await DisposeSessionSafelyAsync(session);
+                return;
+            }
+            AttachSession(session);
+            ModelLabel.Text = chosenModel;
+            if (UseModelByDefaultCheckBox.IsChecked == true)
+            {
+                try
+                {
+                    var settings = app.Settings.Current.Clone();
+                    settings.Model = chosenModel;
+                    app.Settings.Save(settings);
+                }
+                catch (Exception)
+                {
+                    RetryStatusLine.Text = "Couldn't save the default model setting.";
+                    RetryStatusLine.Visibility = Visibility.Visible;
+                }
+            }
+            await SendTurnAsync(prompt, showUserMessage: false, preserveStatus: true);
+        }
+        catch (Exception ex)
+        {
+            if (!_closing)
+            {
+                ShowError(ex.Message);
+                if (_preset is not null) ModelRetryPanel.Visibility = Visibility.Visible;
+                RetryStatusLine.Text = "Retry couldn't be started. Please try again.";
+                RetryStatusLine.Visibility = Visibility.Visible;
+            }
+        }
+        finally
+        {
+            _isRetrying = false;
+            ModelRetryPanel.IsEnabled = true;
+        }
+    }
+
+    private void DetachSession(ChatSession? session)
+    {
+        if (session is null) return;
+        session.Delta -= OnDelta;
+        session.Completed -= OnCompleted;
+        session.Error -= OnError;
+        session.Aborted -= OnAborted;
+        session.Idle -= OnIdle;
+        session.StateChanged -= OnSessionStateChanged;
+    }
+
+    private void StartElapsedTimer()
+    {
+        _elapsedSeconds = 0;
+        _elapsedTimer.Stop();
+        _elapsedTimer.Start();
+    }
+
+    private void ResetElapsedTimer()
+    {
+        _elapsedTimer.Stop();
+        _elapsedSeconds = 0;
+    }
+
+    private void UpdateElapsedStatus(object? sender, EventArgs e)
+    {
+        if (_closing || !_isTurnActive) { _elapsedTimer.Stop(); return; }
+        _elapsedSeconds++;
+        if (_elapsedSeconds >= 15)
+            SetHeaderStatus($"Waiting… {_elapsedSeconds} s", true);
+    }
+
+    private async void Stop_Click(object sender, RoutedEventArgs e)
+    {
+        var session = _session;
+        if (_closing || session is null) return;
+        StopButton.IsEnabled = false;
+        try { await session.AbortAsync(); }
+        catch (Exception) { }
+        finally { if (!_closing) StopButton.IsEnabled = true; }
+    }
+
+    private void OnAborted()
+    {
+        if (_closing) return;
+        _hasResponseFinished = true;
+        _isTurnActive = false;
+        _hasTurnError = false;
+        ResetElapsedTimer();
+        _renderTimer.Stop();
+        _pendingMarkdown = string.Empty;
+        _activeAnswer = null;
+        StoppedLine.Visibility = Visibility.Visible;
+        _wasAborted = true;
+        ConversationPanel.Children.Remove(StoppedLine);
+        ConversationPanel.Children.Add(StoppedLine);
+        SetHeaderStatus("Stopped", false, autoHide: true);
+        UpdateSessionControls(false);
+        FocusComposerSoon(ignoreBusy: true);
+        ConversationScroll.ScrollToEnd();
+    }
+
+    private void RetryModel_Click(object sender, RoutedEventArgs e) => _ = LoadModelsAndRetryAsync();
+    private void OpenSettings_Click(object sender, RoutedEventArgs e) => flowboost.App.OpenSettings();
 
     private void FollowupBox_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -423,11 +643,13 @@ public partial class PopupWindow : Window
     {
         _statusTimer.Stop();
         if (!_isTurnActive && HeaderStatusLabel.Text == "Done") HideHeaderStatus();
+        else if (!_isTurnActive && HeaderStatusLabel.Text == "Stopped") HideHeaderStatus();
     }
 
     private void HideHeaderStatus()
     {
         _statusTimer.Stop();
+        _elapsedTimer.Stop();
         SetBusyIndicator(false);
         HeaderStatusBadge.Visibility = Visibility.Collapsed;
         HeaderStatusLabel.Text = string.Empty;
@@ -483,13 +705,10 @@ public partial class PopupWindow : Window
         _renderTimer.Stop();
         _busyTimer.Stop();
         _statusTimer.Stop();
+        _elapsedTimer.Stop();
         HeaderStatusBadge.Visibility = Visibility.Collapsed;
         if (_session is null) return;
-        _session.Delta -= OnDelta;
-        _session.Completed -= OnCompleted;
-        _session.Error -= OnError;
-        _session.Idle -= OnIdle;
-        _session.StateChanged -= OnSessionStateChanged;
+        DetachSession(_session);
         await DisposeSessionSafelyAsync(_session);
         _session = null;
     }

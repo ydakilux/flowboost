@@ -4,6 +4,18 @@ All notable changes to flowboost are documented in this file.
 
 This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and flowboost uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Result popup shows elapsed waiting time in the title-bar badge after 15 seconds, and a **Stop** button to abort a pending Copilot reply.
+- When a model is unavailable (for example, a 503 outage), the popup shows a plain-language message and an inline **Try another model** panel: pick a model, retry the same request, and optionally make it the default.
+- Expired sign-in errors in the popup include an **Open Settings** shortcut.
+
+### Changed
+
+- Runtime error text is classified and shortened before display; request identifiers are removed.
+
 ## [0.1.1] - 2026-09-28
 
 ### Added

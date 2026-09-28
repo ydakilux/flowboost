@@ -16,7 +16,7 @@
         <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Grid Grid.Row="0" Margin="18,13,12,12" Background="Transparent" PreviewMouseLeftButtonDown="Header_MouseLeftButtonDown">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Grid VerticalAlignment="Center">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <Border Width="8" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}" Margin="0,0,9,0" />
@@ -34,14 +34,27 @@
                     </Border>
                 </Grid>
                 <TextBlock Grid.Column="1" Text="DRAG TO MOVE" Foreground="{DynamicResource MutedForeground}" FontSize="9" VerticalAlignment="Center" Margin="0,0,12,0" IsHitTestVisible="False" />
-                <Button x:Name="CopyButton" Grid.Column="2" Content="Copy" Style="{StaticResource QuietButton}" Padding="10,5" Margin="0,0,8,0" Click="Copy_Click" IsEnabled="False" />
-                <Button Grid.Column="3" Content="×" FontSize="19" Width="32" Height="30" Background="Transparent" Foreground="{DynamicResource MutedForeground}" BorderThickness="0" Click="Close_Click" ToolTip="Close" />
+                <Button x:Name="StopButton" Grid.Column="2" Content="Stop" Style="{StaticResource QuietButton}" Padding="9,5" Margin="0,0,8,0" Click="Stop_Click" Visibility="Collapsed" />
+                <Button x:Name="CopyButton" Grid.Column="3" Content="Copy" Style="{StaticResource QuietButton}" Padding="10,5" Margin="0,0,8,0" Click="Copy_Click" IsEnabled="False" />
+                <Button Grid.Column="4" Content="×" FontSize="19" Width="32" Height="30" Background="Transparent" Foreground="{DynamicResource MutedForeground}" BorderThickness="0" Click="Close_Click" ToolTip="Close" />
             </Grid>
             <Border Grid.Row="1" Margin="12,0" Background="{DynamicResource PanelBackground}" CornerRadius="9" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
                 <ScrollViewer x:Name="ConversationScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="15,12">
                     <StackPanel x:Name="ConversationPanel">
                         <TextBlock x:Name="SelectionPreview" TextWrapping="Wrap" Foreground="{DynamicResource MutedForeground}" FontSize="12" Margin="0,0,0,12" Visibility="Collapsed" />
                         <TextBlock x:Name="ErrorLabel" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,4" Visibility="Collapsed" />
+                        <Button x:Name="OpenSettingsButton" Content="Open Settings" Style="{StaticResource QuietButton}" Padding="10,5" Margin="0,5,0,10" HorizontalAlignment="Left" Click="OpenSettings_Click" Visibility="Collapsed" />
+                        <Border x:Name="ModelRetryPanel" Background="{DynamicResource PanelAltBackground}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="11" Margin="0,8,0,12" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="Try another model" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                <ComboBox x:Name="ModelComboBox" IsEditable="False" MinWidth="220" HorizontalAlignment="Stretch" Margin="0,0,0,7" />
+                                <TextBlock x:Name="ModelListStatus" Foreground="{DynamicResource MutedForeground}" FontSize="11" Margin="0,0,0,8" Visibility="Collapsed" />
+                                <CheckBox x:Name="UseModelByDefaultCheckBox" Content="Use this model by default" Margin="0,0,0,10" />
+                                <Button x:Name="RetryModelButton" Content="Retry with this model" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Click="RetryModel_Click" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="StoppedLine" Text="Stopped." Foreground="{DynamicResource MutedForeground}" Margin="0,2,0,10" Visibility="Collapsed" />
+                        <TextBlock x:Name="RetryStatusLine" Foreground="{DynamicResource MutedForeground}" TextWrapping="Wrap" Margin="0,2,0,8" Visibility="Collapsed" />
                     </StackPanel>
                 </ScrollViewer>
             </Border>
