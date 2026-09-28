@@ -5,9 +5,11 @@ namespace flowboost.Services;
 
 public sealed class ChatSession : IAsyncDisposable
 {
+    private const string SavedSignInRejectedMessage = "Your GitHub sign-in has expired. Sign in again from Settings.";
     private readonly CopilotSession _session;
     private readonly Dispatcher _dispatcher;
     private readonly Func<ChatSession, Task> _deleteFromClient;
+    private readonly Action _markSavedSignInRejected;
     private readonly object _stateLock = new();
     private readonly Action<AssistantMessageDeltaEvent> _deltaHandler;
     private readonly Action<AssistantMessageEvent> _completeHandler;
@@ -32,9 +34,10 @@ public sealed class ChatSession : IAsyncDisposable
     public event Action? Idle;
     public event Action? StateChanged;
 
-    internal ChatSession(string presetName, string model, CopilotSession session, Dispatcher dispatcher, Func<ChatSession, Task> deleteFromClient)
+    internal ChatSession(string presetName, string model, CopilotSession session, Dispatcher dispatcher, Func<ChatSession, Task> deleteFromClient, Action markSavedSignInRejected)
     {
         PresetName = presetName; Model = model; _session = session; _dispatcher = dispatcher; _deleteFromClient = deleteFromClient;
+        _markSavedSignInRejected = markSavedSignInRejected;
         _deltaHandler = e => Dispatch(() =>
         {
             if (IsClosing) return;
@@ -49,7 +52,13 @@ public sealed class ChatSession : IAsyncDisposable
         {
             if (IsClosing) return;
             AppLog.WriteSessionErrorEvent();
-            SetBusy(false); Error?.Invoke(e.Data.Message);
+            var message = e.Data.Message;
+            if (message.Contains("No GitHub OAuth token", StringComparison.OrdinalIgnoreCase))
+            {
+                _markSavedSignInRejected();
+                message = SavedSignInRejectedMessage;
+            }
+            SetBusy(false); Error?.Invoke(message);
         });
         _idleHandler = _ => Dispatch(() =>
         {

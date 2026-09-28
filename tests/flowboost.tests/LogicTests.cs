@@ -2,6 +2,7 @@ using System.IO;
 using System.Reflection;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Input;
 using flowboost.Models;
@@ -80,6 +81,87 @@ public sealed class LogicTests
         Assert.Null(auth.AccessToken);
         Assert.Equal("Not signed in to GitHub", auth.StatusText);
         Assert.False(File.Exists(tokenPath));
+    }
+
+    [Fact]
+    public async Task SavedTokenValidation401ExpiresSignInButPreservesTokenFile()
+    {
+        using var store = new TemporaryTokenStore();
+        CreateSavedToken(store.TokenPath, "saved-test-token");
+        var originalTokenFile = File.ReadAllBytes(store.TokenPath);
+        using var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent("private response body")
+        });
+        using var client = new HttpClient(handler);
+        var auth = new AuthService(client, store.TokenPath);
+        var stateChanges = 0;
+        auth.AuthStateChanged += () => stateChanges++;
+
+        await auth.ValidateSavedTokenAsync(CancellationToken.None);
+
+        Assert.False(auth.IsSignedIn);
+        Assert.Null(auth.AccessToken);
+        Assert.Equal("Your GitHub sign-in has expired. Sign in again.", auth.StatusText);
+        Assert.Equal(1, stateChanges);
+        Assert.True(File.Exists(store.TokenPath));
+        Assert.Equal(originalTokenFile, File.ReadAllBytes(store.TokenPath));
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("https://api.github.com/user", request.Uri);
+        Assert.Equal("application/vnd.github+json", request.Accept);
+        Assert.Equal("Bearer saved-test-token", request.Authorization);
+        Assert.Equal("flowboost/0.1.0", request.UserAgent);
+    }
+
+    [Fact]
+    public async Task SavedTokenValidation200LeavesSignInUnchanged()
+    {
+        using var store = new TemporaryTokenStore();
+        CreateSavedToken(store.TokenPath, "saved-test-token");
+        using var handler = new ScriptedHandler(_ => JsonResponse("{}"));
+        using var client = new HttpClient(handler);
+        var auth = new AuthService(client, store.TokenPath);
+        var stateChanges = 0;
+        auth.AuthStateChanged += () => stateChanges++;
+
+        await auth.ValidateSavedTokenAsync(CancellationToken.None);
+
+        Assert.True(auth.IsSignedIn);
+        Assert.Equal("saved-test-token", auth.AccessToken);
+        Assert.Equal("Signed in to GitHub", auth.StatusText);
+        Assert.Equal(0, stateChanges);
+        Assert.True(File.Exists(store.TokenPath));
+    }
+
+    [Fact]
+    public async Task SavedTokenValidationNetworkFailureLeavesSignInUnchanged()
+    {
+        using var store = new TemporaryTokenStore();
+        CreateSavedToken(store.TokenPath, "saved-test-token");
+        using var client = new HttpClient(new ThrowHttpHandler());
+        var auth = new AuthService(client, store.TokenPath);
+        var stateChanges = 0;
+        auth.AuthStateChanged += () => stateChanges++;
+
+        await auth.ValidateSavedTokenAsync(CancellationToken.None);
+
+        Assert.True(auth.IsSignedIn);
+        Assert.Equal("saved-test-token", auth.AccessToken);
+        Assert.Equal("Signed in to GitHub", auth.StatusText);
+        Assert.Equal(0, stateChanges);
+        Assert.True(File.Exists(store.TokenPath));
+    }
+
+    [Fact]
+    public void CopilotAuthenticationRejectionRecognizesMissingGitHubOAuthToken()
+    {
+        var method = typeof(CopilotService).GetMethod("IsAuthenticationRejection", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var rejected = (bool)method.Invoke(null, [new RemoteRpcException("No GitHub OAuth token or Copilot HMAC key provided")])!;
+
+        Assert.True(rejected);
     }
 
     [Fact]
@@ -241,10 +323,22 @@ public sealed class LogicTests
     private static HttpResponseMessage JsonResponse(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
+    private static void CreateSavedToken(string tokenPath, string token)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(tokenPath)!);
+        File.WriteAllBytes(tokenPath, ProtectedData.Protect(Encoding.UTF8.GetBytes(token), null, DataProtectionScope.CurrentUser));
+    }
+
     private sealed class ThrowIfUsedHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(new InvalidOperationException("network disabled for test"));
+    }
+
+    private sealed class ThrowHttpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(new HttpRequestException("network failure"));
     }
 
     private sealed class ScriptedHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] responses) : HttpMessageHandler
@@ -255,14 +349,17 @@ public sealed class LogicTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!.ToString(), request.Headers.Accept.ToString(), body));
+            Requests.Add(new CapturedRequest(request.Method, request.RequestUri!.ToString(), request.Headers.Accept.ToString(),
+                request.Headers.Authorization?.ToString() ?? "", string.Join(" ", request.Headers.UserAgent), body));
             var index = Interlocked.Increment(ref _nextResponse) - 1;
             if (index >= responses.Length) throw new InvalidOperationException("Unexpected HTTP request in test.");
             return responses[index](request);
         }
     }
 
-    private sealed record CapturedRequest(HttpMethod Method, string Uri, string Accept, string Body);
+    private sealed record CapturedRequest(HttpMethod Method, string Uri, string Accept, string Authorization, string UserAgent, string Body);
+
+    private sealed class RemoteRpcException(string message) : Exception(message);
 
     private sealed class TemporaryTokenStore : IDisposable
     {

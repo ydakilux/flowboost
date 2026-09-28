@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Net.Http.Headers;
 
 namespace flowboost.Services;
 
@@ -9,6 +10,7 @@ public sealed record DeviceCodeInfo(string UserCode, string VerificationUri, int
 
 public sealed class AuthService
 {
+    private const string ExpiredSignInStatus = "Your GitHub sign-in has expired. Sign in again.";
     private const string ClientId = "Ov23liqG8kTL46zQIcIk";
     private const string DeviceCodeEndpoint = "https://github.com/login/device/code";
     private const string AccessTokenEndpoint = "https://github.com/login/oauth/access_token";
@@ -220,6 +222,42 @@ public sealed class AuthService
             throw new IOException("Could not remove the saved GitHub token.", deletionFailure);
         }
         AuthStateChanged?.Invoke();
+    }
+
+    public async Task ValidateSavedTokenAsync(CancellationToken cancellationToken)
+    {
+        string? token;
+        lock (_sync) token = _isSignedIn ? _accessToken : null;
+        if (string.IsNullOrWhiteSpace(token)) return;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            request.Headers.UserAgent.ParseAdd("flowboost/0.1.0");
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                MarkSavedSignInRejected();
+        }
+        catch (HttpRequestException) { }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+    }
+
+    public void MarkSavedSignInRejected()
+    {
+        var changed = false;
+        lock (_sync)
+        {
+            if (_isSignedIn || !string.Equals(_statusText, ExpiredSignInStatus, StringComparison.Ordinal))
+            {
+                _isSignedIn = false;
+                _accessToken = null;
+                _statusText = ExpiredSignInStatus;
+                changed = true;
+            }
+        }
+        if (changed) AuthStateChanged?.Invoke();
     }
 
     private void LoadToken()

@@ -10,7 +10,7 @@ namespace flowboost.Services;
 public sealed class CopilotService : IAsyncDisposable
 {
     private const string AuthenticationRejectedMessage = "Not authenticated. Please authenticate first.";
-    private const string SavedSignInRejectedMessage = "Copilot rejected the saved sign-in. Sign in again from Settings.";
+    private const string SavedSignInRejectedMessage = "Your GitHub sign-in has expired. Sign in again from Settings.";
     private const string ConnectionRecoveryFailedMessage = "Copilot connection was lost. Check your connection and try again.";
 
     private readonly AuthService _auth;
@@ -62,9 +62,11 @@ public sealed class CopilotService : IAsyncDisposable
             try { sdkSession = await client.CreateSessionAsync(config).ConfigureAwait(false); }
             catch (Exception ex) when (IsAuthenticationRejection(ex))
             {
+                _auth.MarkSavedSignInRejected();
                 throw new InvalidOperationException(SavedSignInRejectedMessage);
             }
-            var result = new ChatSession(p.Name, _settings.Current.Model, sdkSession, _dispatcher, session => DeleteSessionAsync(client, session));
+            var result = new ChatSession(p.Name, _settings.Current.Model, sdkSession, _dispatcher,
+                session => DeleteSessionAsync(client, session), _auth.MarkSavedSignInRejected);
             lock (_sessionsLock) _sessions.Add(result);
             return result;
         }
@@ -143,6 +145,7 @@ public sealed class CopilotService : IAsyncDisposable
         }
         catch (Exception ex) when (IsAuthenticationRejection(ex))
         {
+            _auth.MarkSavedSignInRejected();
             throw new InvalidOperationException(SavedSignInRejectedMessage);
         }
         catch (Exception ex) when (IsConnectionLost(ex))
@@ -168,7 +171,8 @@ public sealed class CopilotService : IAsyncDisposable
 
     private static bool IsAuthenticationRejection(Exception exception) =>
         exception.GetType().Name == "RemoteRpcException" &&
-        exception.Message.Contains(AuthenticationRejectedMessage, StringComparison.OrdinalIgnoreCase);
+        (exception.Message.Contains(AuthenticationRejectedMessage, StringComparison.OrdinalIgnoreCase) ||
+         exception.Message.Contains("No GitHub OAuth token", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsConnectionLost(Exception exception) => exception.GetType().Name == "ConnectionLostException";
 

@@ -56,6 +56,16 @@ public partial class App : System.Windows.Application
             ShowSettings();
             _tray?.Balloon("flowboost", "Sign in to GitHub Copilot to get started");
         }
+        else
+        {
+            _ = ValidateSavedSignInAsync();
+        }
+    }
+
+    private async Task ValidateSavedSignInAsync()
+    {
+        try { await Auth.ValidateSavedTokenAsync(CancellationToken.None); }
+        catch (Exception) { AppLog.Write("Saved GitHub sign-in validation failed"); }
     }
 
     public static void OpenSettings() => Current.ShowSettings();
@@ -275,7 +285,15 @@ public partial class App : System.Windows.Application
 
     private async Task ReconcileAuthStateAsync()
     {
-        if (!Auth.IsSignedIn) CloseDeviceCodeWindow();
+        if (!Auth.IsSignedIn)
+        {
+            CloseDeviceCodeWindow();
+            if (string.Equals(Auth.StatusText, "Your GitHub sign-in has expired. Sign in again.", StringComparison.Ordinal))
+            {
+                ShowSettings();
+                _tray?.Balloon("GitHub sign-in", "Your GitHub sign-in has expired. Sign in again.");
+            }
+        }
         foreach (var popup in _popups.ToArray()) popup.Close();
         await Copilot.RefreshAuthenticationAsync();
         UpdateTray();
