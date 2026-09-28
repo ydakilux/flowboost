@@ -103,8 +103,12 @@
                             <TextBlock Text="About" FontSize="16" FontWeight="SemiBold" />
                             <TextBlock Text="flowboost" Margin="0,7,0,0" />
                             <TextBlock x:Name="AppVersionText" Foreground="{DynamicResource MutedForeground}" FontSize="11" Margin="0,3,0,0" AutomationProperties.Name="Application version" />
+                            <TextBlock x:Name="UpdateStatusText" Foreground="{DynamicResource MutedForeground}" FontSize="11" Margin="0,5,0,0" AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
-                        <Button Grid.Column="2" Content="What changed" Style="{StaticResource QuietButton}" VerticalAlignment="Center" Margin="14,0,0,0" Click="WhatChanged_Click" />
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                            <Button x:Name="CheckForUpdatesButton" Content="Check for updates" Style="{StaticResource QuietButton}" Click="CheckForUpdates_Click" />
+                            <Button Content="What changed" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="WhatChanged_Click" />
+                        </StackPanel>
                     </Grid>
                 </Border>
             </StackPanel>

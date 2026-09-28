@@ -56,6 +56,7 @@ public sealed class AppSettings
     public List<Preset> Presets { get; set; } = CreateDefaultPresets();
     public bool StartWithWindows { get; set; } = true;
     public AppTheme Theme { get; set; } = AppTheme.System;
+    public string SkippedUpdateVersion { get; set; } = "";
 
     public AppSettings Clone() => new()
     {
@@ -65,7 +66,7 @@ public sealed class AppSettings
             Name = p.Name, Prompt = p.Prompt, Hotkey = new HotkeyBinding { Modifiers = p.Hotkey.Modifiers, Key = p.Hotkey.Key },
             ResponseLanguage = p.ResponseLanguage, Enabled = p.Enabled
         }).ToList(),
-        StartWithWindows = StartWithWindows, Theme = Theme
+        StartWithWindows = StartWithWindows, Theme = Theme, SkippedUpdateVersion = SkippedUpdateVersion
     };
 
     public static List<Preset> CreateDefaultPresets() =>

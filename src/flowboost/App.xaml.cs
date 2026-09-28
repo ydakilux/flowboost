@@ -18,6 +18,8 @@ public partial class App : System.Windows.Application
     private AutostartService? _autostart;
     private SettingsWindow? _settingsWindow;
     private DeviceCodeWindow? _deviceCodeWindow;
+    private UpdateService _updates = null!;
+    private UpdateAvailableWindow? _updateWindow;
     private bool _exiting;
     private readonly SemaphoreSlim _captureLock = new(1, 1);
     private readonly HashSet<PopupWindow> _popups = [];
@@ -51,6 +53,8 @@ public partial class App : System.Windows.Application
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { _tray.Balloon("Autostart", ex.Message); }
         RegisterHotkeys();
         Auth.AuthStateChanged += OnAuthStateChanged;
+        _updates = new UpdateService();
+        _ = CheckForUpdatesAtStartupAsync();
         if (!Auth.IsSignedIn)
         {
             ShowSettings();
@@ -60,6 +64,85 @@ public partial class App : System.Windows.Application
         {
             _ = ValidateSavedSignInAsync();
         }
+    }
+
+    private async Task CheckForUpdatesAtStartupAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            await CheckForUpdatesAsync(manual: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update check failed", ex);
+        }
+    }
+
+    public async Task<UpdateCheckResult> CheckForUpdatesAsync(bool manual)
+    {
+        if (_exiting) return new UpdateCheckResult(UpdateCheckStatus.Failed, null);
+
+        var result = await _updates.CheckAsync(CancellationToken.None);
+        var info = result.Info;
+        if (result.Status != UpdateCheckStatus.UpdateAvailable || info is null ||
+            (!manual && info.LatestVersion.ToString() == Settings.Current.SkippedUpdateVersion))
+            return result;
+
+        UpdateDecision? decision;
+        try
+        {
+            decision = await Dispatcher.InvokeAsync<UpdateDecision?>(() =>
+            {
+                if (_exiting || _updateWindow is not null) return null;
+
+                var window = new UpdateAvailableWindow(info)
+                {
+                    Topmost = true,
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen
+                };
+                if (_settingsWindow?.IsVisible == true) window.Owner = _settingsWindow;
+                _updateWindow = window;
+                try
+                {
+                    window.ShowDialog();
+                    return window.Decision;
+                }
+                finally { _updateWindow = null; }
+            }).Task;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update check failed", ex);
+            _tray?.Balloon("Updates", "Could not show the update dialog.");
+            return result;
+        }
+
+        if (decision == UpdateDecision.OpenReleasePage)
+        {
+            try { Process.Start(new ProcessStartInfo(info.ReleaseUrl) { UseShellExecute = true }); }
+            catch (Exception ex)
+            {
+                AppLog.Write("Update check failed", ex);
+                _tray?.Balloon("Updates", "Could not open the release page.");
+            }
+        }
+        else if (decision == UpdateDecision.Skip)
+        {
+            try
+            {
+                var settings = Settings.Current.Clone();
+                settings.SkippedUpdateVersion = info.LatestVersion.ToString();
+                Settings.Save(settings);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("Update check failed", ex);
+                _tray?.Balloon("Updates", "Could not save the skipped version.");
+            }
+        }
+
+        return result;
     }
 
     private async Task ValidateSavedSignInAsync()

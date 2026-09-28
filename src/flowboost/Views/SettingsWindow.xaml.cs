@@ -234,12 +234,43 @@ public partial class SettingsWindow : Window
         dialog.ShowDialog();
     }
 
-    private static string GetDisplayVersion()
+    private async void CheckForUpdates_Click(object sender, RoutedEventArgs e)
     {
-        var informationalVersion = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        var version = string.IsNullOrWhiteSpace(informationalVersion) ? "0.1.0" : informationalVersion;
-        var metadataSeparator = version.IndexOf('+');
-        return metadataSeparator >= 0 ? version[..metadataSeparator] : version;
+        CheckForUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Foreground = (System.Windows.Media.Brush)FindResource("MutedForeground");
+        UpdateStatusText.Text = "Checking…";
+
+        try
+        {
+            var result = await _app.CheckForUpdatesAsync(manual: true);
+            switch (result.Status)
+            {
+                case UpdateCheckStatus.UpToDate:
+                    UpdateStatusText.Text = "You're on the latest version.";
+                    break;
+                case UpdateCheckStatus.UpdateAvailable when result.Info is { } info:
+                    UpdateStatusText.Text = $"Version {info.LatestVersion} is available.";
+                    break;
+                default:
+                    ShowUpdateCheckFailure();
+                    break;
+            }
+        }
+        catch (Exception)
+        {
+            ShowUpdateCheckFailure();
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
     }
+
+    private void ShowUpdateCheckFailure()
+    {
+        UpdateStatusText.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+        UpdateStatusText.Text = "Couldn't check for updates. Check your connection and try again.";
+    }
+
+    private static string GetDisplayVersion() => AppVersion.Display;
 }

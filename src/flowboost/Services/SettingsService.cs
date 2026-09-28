@@ -63,6 +63,7 @@ public sealed class SettingsService
         settings ??= new AppSettings();
         if (string.IsNullOrWhiteSpace(settings.Model)) settings.Model = "gpt-5";
         if (!Enum.IsDefined(settings.Theme)) settings.Theme = AppTheme.System;
+        settings.SkippedUpdateVersion ??= "";
         settings.Presets ??= AppSettings.CreateDefaultPresets();
         foreach (var preset in settings.Presets)
         {

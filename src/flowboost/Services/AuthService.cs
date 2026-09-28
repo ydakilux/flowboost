@@ -235,7 +235,7 @@ public sealed class AuthService
             using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
-            request.Headers.UserAgent.ParseAdd("flowboost/0.1.0");
+            request.Headers.UserAgent.ParseAdd($"flowboost/{AppVersion.Display}");
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 MarkSavedSignInRejected();

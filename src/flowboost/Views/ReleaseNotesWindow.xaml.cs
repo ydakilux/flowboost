@@ -34,14 +34,7 @@ public partial class ReleaseNotesWindow : Window
         }
     }
 
-    private static string GetDisplayVersion()
-    {
-        var informationalVersion = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        var version = string.IsNullOrWhiteSpace(informationalVersion) ? "unknown" : informationalVersion;
-        var metadataSeparator = version.IndexOf('+');
-        return metadataSeparator >= 0 ? version[..metadataSeparator] : version;
-    }
+    private static string GetDisplayVersion() => flowboost.Services.AppVersion.Display;
 
     private void ShowLoadError(string message)
     {
