@@ -14,7 +14,17 @@ flowboost uses [Semantic Versioning](https://semver.org/) in `MAJOR.MINOR.PATCH`
 
 flowboost checks GitHub Releases at startup and on request via **Settings > Check for updates**. When an update is available, the app shows a dialog with the release information and a link to its release page. flowboost never downloads or installs updates automatically.
 
-To publish an update, maintainers must create a GitHub Release with a tag in `vMAJOR.MINOR.PATCH` format matching the `<Version>` in `src/flowboost/flowboost.csproj`, and attach the published `publish\flowboost.exe`.
+## Releasing
+
+Releases are built and published by the [Release workflow](.github/workflows/release.yml) whenever a `vMAJOR.MINOR.PATCH` tag is pushed. It checks out the tagged commit, verifies the tag matches `<Version>` in `src/flowboost/flowboost.csproj`, runs the tests, publishes the single-file executable, and creates a GitHub Release with `flowboost.exe`, a `flowboost.exe.sha256` checksum, and the matching `## [MAJOR.MINOR.PATCH]` section of `CHANGELOG.md` as release notes. Nothing needs to be uploaded by hand.
+
+To publish a release:
+
+1. Bump `<Version>`, `<AssemblyVersion>`, `<FileVersion>`, and `<InformationalVersion>` in `src/flowboost/flowboost.csproj`, and update the version assertions in `tests/flowboost.tests/LogicTests.cs`.
+2. Add a `## [MAJOR.MINOR.PATCH] - YYYY-MM-DD` section to `CHANGELOG.md` and update the version in this README.
+3. Commit, then tag and push: `git tag -a vMAJOR.MINOR.PATCH -m "flowboost MAJOR.MINOR.PATCH"` and `git push origin master vMAJOR.MINOR.PATCH`.
+
+The workflow fails early if the tag and project version disagree or the changelog section is missing. It can also be run manually from the **Actions** tab for an existing tag. The app's update check picks up the new release automatically.
 
 ## Build and run
 

@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.1.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify tag matches project version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -LiteralPath 'src/flowboost/flowboost.csproj' -Raw
+          $version = ($project.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ } | Select-Object -First 1).Trim()
+          $tagVersion = $env:RELEASE_TAG -replace '^[vV]', ''
+          if ($version -ne $tagVersion) {
+            Write-Error "Tag '$env:RELEASE_TAG' does not match <Version>$version</Version> in flowboost.csproj. Bump the version, commit, and re-tag."
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing flowboost $version from tag $env:RELEASE_TAG"
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $changelog = Get-Content -LiteralPath 'CHANGELOG.md' -Raw
+          $pattern = "(?ms)^## \[$([regex]::Escape($version))\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+          if (-not $match.Success) {
+            Write-Error "CHANGELOG.md has no '## [$version]' section. Add release notes before tagging."
+            exit 1
+          }
+          $notes = $match.Groups[1].Value.Trim()
+          $notes += "`n`n---`n`nRequires the .NET 10 Desktop Runtime (x64). Download flowboost.exe below; verify it with the SHA-256 in flowboost.exe.sha256."
+          Set-Content -LiteralPath 'release_notes.md' -Value $notes -Encoding utf8
+          Get-Content -LiteralPath 'release_notes.md'
+
+      - name: Restore
+        run: dotnet restore flowboost.slnx
+
+      - name: Test
+        run: dotnet test flowboost.slnx --no-restore --configuration Release
+
+      - name: Publish single-file executable
+        run: dotnet publish src/flowboost/flowboost.csproj --configuration Release --output publish
+
+      - name: Compute checksum
+        shell: pwsh
+        run: |
+          $exe = Get-Item -LiteralPath 'publish/flowboost.exe'
+          $hash = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath 'publish/flowboost.exe.sha256' -Value "$hash  flowboost.exe" -Encoding ascii
+          Write-Host ("flowboost.exe {0:N0} bytes, ProductVersion {1}, SHA-256 {2}" -f $exe.Length, $exe.VersionInfo.ProductVersion, $hash)
+          if ($exe.VersionInfo.ProductVersion -ne '${{ steps.version.outputs.version }}') {
+            Write-Error "Published ProductVersion '$($exe.VersionInfo.ProductVersion)' does not match expected version."
+            exit 1
+          }
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          gh release create $env:RELEASE_TAG `
+            'publish/flowboost.exe' `
+            'publish/flowboost.exe.sha256' `
+            --repo '${{ github.repository }}' `
+            --title "flowboost $version" `
+            --notes-file 'release_notes.md' `
+            --verify-tag
