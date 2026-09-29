@@ -18,12 +18,12 @@ public sealed class LogicTests
     {
         var appAssembly = typeof(SettingsService).Assembly;
         var informationalVersion = appAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        Assert.Equal("0.1.1", informationalVersion);
+        Assert.Equal("0.1.2", informationalVersion);
 
         using var changelogStream = appAssembly.GetManifestResourceStream("flowboost.CHANGELOG.md");
         Assert.NotNull(changelogStream);
         using var reader = new StreamReader(changelogStream);
-        Assert.Contains("[0.1.1]", reader.ReadToEnd());
+        Assert.Contains("[0.1.2]", reader.ReadToEnd());
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class LogicTests
         Assert.Equal("https://api.github.com/user", request.Uri);
         Assert.Equal("application/vnd.github+json", request.Accept);
         Assert.Equal("Bearer saved-test-token", request.Authorization);
-        Assert.Equal("flowboost/0.1.1", request.UserAgent);
+        Assert.Equal("flowboost/0.1.2", request.UserAgent);
     }
 
     [Fact]

@@ -6,6 +6,8 @@ This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-29
+
 ### Added
 
 - Result popup shows elapsed waiting time in the title-bar badge after 15 seconds, and a **Stop** button to abort a pending Copilot reply.
@@ -15,6 +17,7 @@ This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Runtime error text is classified and shortened before display; request identifiers are removed.
+- Enabled ReadyToRun compilation for the published executable.
 
 ## [0.1.1] - 2026-09-28
 

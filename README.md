@@ -8,7 +8,7 @@ Repository: [github.com/ydakilux/flowboost](https://github.com/ydakilux/flowboos
 
 ## Versioning and release notes
 
-flowboost uses [Semantic Versioning](https://semver.org/) in `MAJOR.MINOR.PATCH` format. The current app version is **0.1.1**; the app version and release notes are available from Settings. Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
+flowboost uses [Semantic Versioning](https://semver.org/) in `MAJOR.MINOR.PATCH` format. The current app version is **0.1.2**; the app version and release notes are available from Settings. Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Updates
 
