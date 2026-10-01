@@ -23,6 +23,37 @@ public sealed class UpdateServiceTests
         Assert.Equal("Release 0.2.0", result.Info.ReleaseName);
     }
 
+    [Fact]
+    public async Task ParsesTrustedReleaseAssetsAndSize()
+    {
+        var result = await CheckAsync(HttpStatusCode.OK, """{"tag_name":"v0.2.0","assets":[{"name":"flowboost.exe","browser_download_url":"https://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe","size":12345},{"name":"flowboost.exe.sha256","browser_download_url":"https://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe.sha256"}]}""");
+
+        Assert.Equal("https://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe", result.Info!.ExeUrl);
+        Assert.Equal("https://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe.sha256", result.Info.Sha256Url);
+        Assert.Equal(12345, result.Info.ExeSize);
+    }
+
+    [Theory]
+    [InlineData("https://evil.example/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe")]
+    [InlineData("http://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe")]
+    public async Task RejectsUntrustedAssetUrls(string exeUrl)
+    {
+        var result = await CheckAsync(HttpStatusCode.OK, $$"""{"tag_name":"v0.2.0","assets":[{"name":"flowboost.exe","browser_download_url":"{{exeUrl}}","size":123},{"name":"flowboost.exe.sha256","browser_download_url":"https://github.com/ydakilux/flowboost/releases/download/v0.2.0/flowboost.exe.sha256"}]}""");
+        Assert.Null(result.Info!.ExeUrl);
+        Assert.NotNull(result.Info.Sha256Url);
+    }
+
+    [Fact]
+    public async Task MissingOrUnrecognizedAssetsAreNull()
+    {
+        var missing = await CheckAsync(HttpStatusCode.OK, "{\"tag_name\":\"v0.2.0\"}");
+        var unrecognized = await CheckAsync(HttpStatusCode.OK, """{"tag_name":"v0.2.0","assets":[{"name":"other.exe","browser_download_url":"https://github.com/ydakilux/flowboost/releases/download/v0.2.0/other.exe"}]}""");
+        Assert.Null(missing.Info!.ExeUrl);
+        Assert.Null(missing.Info.Sha256Url);
+        Assert.Null(unrecognized.Info!.ExeUrl);
+        Assert.Null(unrecognized.Info.Sha256Url);
+    }
+
     [Theory]
     [InlineData("v0.1.0")]
     [InlineData("v0.0.9")]

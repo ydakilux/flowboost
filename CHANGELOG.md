@@ -6,6 +6,16 @@ This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-01
+
+### Added
+
+- **Update now** downloads the update with progress, verifies its SHA-256 checksum, restarts flowboost, and rolls back if replacement or restart fails. No scripts or administrator rights are needed when the install folder is writable.
+
+### Changed
+
+- Update dialog wording explains the in-app download, checksum check, and restart.
+
 ## [0.1.2] - 2026-09-29
 
 ### Added

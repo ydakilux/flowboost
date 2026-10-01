@@ -8,11 +8,11 @@ Repository: [github.com/ydakilux/flowboost](https://github.com/ydakilux/flowboos
 
 ## Versioning and release notes
 
-flowboost uses [Semantic Versioning](https://semver.org/) in `MAJOR.MINOR.PATCH` format. The current app version is **0.1.2**; the app version and release notes are available from Settings. Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
+flowboost uses [Semantic Versioning](https://semver.org/) in `MAJOR.MINOR.PATCH` format. The current app version is **0.1.3**; the app version and release notes are available from Settings. Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## Updates
 
-flowboost checks GitHub Releases at startup and on request via **Settings > Check for updates**. When an update is available, the app shows a dialog with the release information and a link to its release page. flowboost never downloads or installs updates automatically.
+flowboost checks GitHub Releases at startup and on request via **Settings > Check for updates**. When a release includes the official executable and checksum, choose **Update now** to download it, verify its SHA-256 checksum, and restart flowboost. The app only updates after you choose; **Open GitHub** remains available for a manual download. Updating replaces the executable in its current folder, so that folder must be writable by your Windows account. No scripts or administrator rights are needed when it is writable.
 
 ## Releasing
 

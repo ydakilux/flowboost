@@ -20,6 +20,8 @@ public partial class App : System.Windows.Application
     private DeviceCodeWindow? _deviceCodeWindow;
     private UpdateService _updates = null!;
     private UpdateAvailableWindow? _updateWindow;
+    private DownloadProgressWindow? _downloadWindow;
+    private bool _updateInProgress;
     private bool _exiting;
     private readonly SemaphoreSlim _captureLock = new(1, 1);
     private readonly HashSet<PopupWindow> _popups = [];
@@ -35,9 +37,12 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        WaitForPreviousUpdatedProcess();
         base.OnStartup(e);
         _mutex = new Mutex(true, "Local\\flowboost.SingleInstance", out var created);
         if (!created) { Shutdown(); return; }
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(processPath)) _ = Task.Run(() => UpdateInstaller.CleanupLeftovers(processPath));
         Settings = new SettingsService(); Auth = new AuthService();
         Copilot = new CopilotService(Auth, Settings, Dispatcher);
         _selection = new SelectionService(); _autostart = new AutostartService();
@@ -66,6 +71,22 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private static void WaitForPreviousUpdatedProcess()
+    {
+        try
+        {
+            var args = Environment.GetCommandLineArgs();
+            var index = Array.FindIndex(args, arg => string.Equals(arg, "--updated-from", StringComparison.Ordinal));
+            if (index < 0 || index + 1 >= args.Length || !int.TryParse(args[index + 1], out var processId) || processId <= 0) return;
+            using var previous = Process.GetProcessById(processId);
+            previous.WaitForExit(15_000);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Update install failed", ex);
+        }
+    }
+
     private async Task CheckForUpdatesAtStartupAsync()
     {
         try
@@ -81,7 +102,7 @@ public partial class App : System.Windows.Application
 
     public async Task<UpdateCheckResult> CheckForUpdatesAsync(bool manual)
     {
-        if (_exiting) return new UpdateCheckResult(UpdateCheckStatus.Failed, null);
+        if (_exiting || _updateInProgress) return new UpdateCheckResult(UpdateCheckStatus.Failed, null);
 
         var result = await _updates.CheckAsync(CancellationToken.None);
         var info = result.Info;
@@ -94,7 +115,7 @@ public partial class App : System.Windows.Application
         {
             decision = await Dispatcher.InvokeAsync<UpdateDecision?>(() =>
             {
-                if (_exiting || _updateWindow is not null) return null;
+                if (_exiting || _updateWindow is not null || _updateInProgress) return null;
 
                 var window = new UpdateAvailableWindow(info)
                 {
@@ -127,6 +148,10 @@ public partial class App : System.Windows.Application
                 _tray?.Balloon("Updates", "Could not open the release page.");
             }
         }
+        else if (decision == UpdateDecision.InstallNow)
+        {
+            await InstallUpdateAsync(info);
+        }
         else if (decision == UpdateDecision.Skip)
         {
             try
@@ -143,6 +168,83 @@ public partial class App : System.Windows.Application
         }
 
         return result;
+    }
+
+    private async Task InstallUpdateAsync(UpdateInfo info)
+    {
+        if (_exiting || _updateInProgress || info.ExeUrl is null || info.Sha256Url is null) return;
+        _updateInProgress = true;
+        DownloadProgressWindow? window = null;
+        var applied = false;
+        var exePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exePath))
+        {
+            _updateInProgress = false;
+            _tray?.Balloon("Updates", "Could not find the flowboost program. Open GitHub to download the update.");
+            return;
+        }
+
+        try
+        {
+            window = await Dispatcher.InvokeAsync(() =>
+            {
+                var progressWindow = new DownloadProgressWindow(info) { Topmost = true, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+                if (_settingsWindow?.IsVisible == true) progressWindow.Owner = _settingsWindow;
+                _downloadWindow = progressWindow;
+                progressWindow.Show();
+                progressWindow.Activate();
+                return progressWindow;
+            });
+            var progress = new Progress<(long received, long? total)>(value => window.ReportProgress(value.received, value.total));
+            var installer = new UpdateInstaller();
+            var downloadedPath = await installer.DownloadAsync(info, progress, window.CancellationToken, exePath);
+            if (_exiting) return;
+            installer.Apply(downloadedPath, exePath);
+            applied = true;
+            if (!installer.Relaunch(exePath))
+            {
+                installer.Rollback(exePath);
+                applied = false;
+                window.ShowFailure("Could not restart flowboost. Your previous version has been restored. Open GitHub to download the update.");
+                return;
+            }
+
+            window.ShowRestarting();
+            _updateInProgress = false;
+            await ExitAsync();
+        }
+        catch (Exception ex) when (ex is UpdateInstallException or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            AppLog.Write(applied ? "Update install failed" : "Update download failed", ex);
+            if (applied)
+            {
+                try { new UpdateInstaller().Rollback(exePath); }
+                catch (UpdateInstallException rollbackException) { AppLog.Write("Update install failed", rollbackException); }
+            }
+            if (window is { IsVisible: true } && !_exiting)
+                window.ShowFailure(ex is UpdateInstallException ? ex.Message : "Could not install the update. Your current version is still available. Open GitHub to download it.");
+            else
+                _tray?.Balloon("Updates", ex is UpdateInstallException ? ex.Message : "Could not install the update. Open GitHub to download it.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(applied ? "Update install failed" : "Update download failed", ex);
+            if (applied)
+            {
+                try { new UpdateInstaller().Rollback(exePath); }
+                catch (UpdateInstallException rollbackException) { AppLog.Write("Update install failed", rollbackException); }
+            }
+            if (window is { IsVisible: true } && !_exiting)
+                window.ShowFailure("Could not complete the update. Your current version is still available. Open GitHub to download it.");
+            else
+                _tray?.Balloon("Updates", "Could not complete the update. Open GitHub to download it.");
+        }
+        finally
+        {
+            if (ReferenceEquals(_downloadWindow, window)) _downloadWindow = null;
+            if (!_exiting && window is not null && !window.IsVisible) window.Close();
+            _updateInProgress = false;
+        }
     }
 
     private async Task ValidateSavedSignInAsync()
@@ -401,6 +503,12 @@ public partial class App : System.Windows.Application
     private async Task ExitAsync()
     {
         if (_exiting) return;
+        if (_updateInProgress)
+        {
+            _downloadWindow?.CancelDownload();
+            _tray?.Balloon("Updates", "The update is being canceled. Try quitting again in a moment.");
+            return;
+        }
         _exiting = true;
         try
         {

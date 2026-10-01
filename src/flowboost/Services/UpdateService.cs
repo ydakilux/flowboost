@@ -6,9 +6,10 @@ using System.Text.Json;
 
 namespace flowboost.Services;
 
-public enum UpdateDecision { Later, Skip, OpenReleasePage }
+public enum UpdateDecision { Later, Skip, OpenReleasePage, InstallNow }
 
-public sealed record UpdateInfo(Version CurrentVersion, Version LatestVersion, string ReleaseUrl, string? ReleaseName);
+public sealed record UpdateInfo(Version CurrentVersion, Version LatestVersion, string ReleaseUrl, string? ReleaseName,
+    string? ExeUrl = null, string? Sha256Url = null, long? ExeSize = null);
 
 public enum UpdateCheckStatus { UpdateAvailable, UpToDate, Failed }
 
@@ -66,11 +67,12 @@ public sealed class UpdateService
             var latestVersion = NormalizeVersion(parsedVersion);
             var releaseName = GetOptionalString(document.RootElement, "name");
             var releaseUrl = GetReleaseUrl(document.RootElement);
+            var assets = GetReleaseAssets(document.RootElement);
             if (latestVersion <= _currentVersion)
                 return new UpdateCheckResult(UpdateCheckStatus.UpToDate, null);
 
             return new UpdateCheckResult(UpdateCheckStatus.UpdateAvailable,
-                new UpdateInfo(_currentVersion, latestVersion, releaseUrl, releaseName));
+                new UpdateInfo(_currentVersion, latestVersion, releaseUrl, releaseName, assets.ExeUrl, assets.Sha256Url, assets.ExeSize));
         }
         catch (Exception ex)
         {
@@ -99,6 +101,40 @@ public sealed class UpdateService
             return uri.AbsoluteUri;
         return ReleasesPageUrl;
     }
+
+    private static (string? ExeUrl, string? Sha256Url, long? ExeSize) GetReleaseAssets(JsonElement root)
+    {
+        string? exeUrl = null;
+        string? sha256Url = null;
+        long? exeSize = null;
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            return (null, null, null);
+
+        foreach (var asset in assets.EnumerateArray())
+        {
+            if (asset.ValueKind != JsonValueKind.Object) continue;
+            var name = GetOptionalString(asset, "name");
+            var downloadUrl = GetOptionalString(asset, "browser_download_url");
+            if (name == "flowboost.exe")
+            {
+                exeUrl = IsTrustedAssetUrl(downloadUrl) ? downloadUrl : null;
+                if (asset.TryGetProperty("size", out var size) && size.ValueKind == JsonValueKind.Number && size.TryGetInt64(out var parsedSize) && parsedSize >= 0)
+                    exeSize = parsedSize;
+            }
+            else if (name == "flowboost.exe.sha256")
+            {
+                sha256Url = IsTrustedAssetUrl(downloadUrl) ? downloadUrl : null;
+            }
+        }
+
+        return (exeUrl, sha256Url, exeSize);
+    }
+
+    private static bool IsTrustedAssetUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.StartsWith("/ydakilux/flowboost/releases/download/", StringComparison.OrdinalIgnoreCase);
 
     private static Version NormalizeVersion(Version version) => new(version.Major, version.Minor, Math.Max(0, version.Build));
 

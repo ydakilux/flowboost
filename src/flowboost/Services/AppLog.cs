@@ -98,6 +98,8 @@ internal static class AppLog
         "Session creation failed" => "session-creation-failed",
         "Initial session send failed" => "initial-session-send-failed",
         "Hotkey capture failed" => "hotkey-capture-failed",
+        "Update download failed" => "update-download-failed",
+        "Update install failed" => "update-install-failed",
         _ => "operation-failed"
     };
 

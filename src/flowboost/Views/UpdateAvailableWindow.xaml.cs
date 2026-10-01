@@ -16,6 +16,13 @@ public partial class UpdateAvailableWindow : Window
             ReleaseNameText.Text = info.ReleaseName;
             ReleaseNameText.Visibility = Visibility.Visible;
         }
+        if (info.ExeUrl is not null && info.Sha256Url is not null)
+        {
+            ExplanationText.Text = "Update now downloads the new version, verifies its checksum, then restarts flowboost. Nothing is installed without your choice.";
+            UpdateNowButton.Visibility = Visibility.Visible;
+            UpdateNowButton.IsDefault = true;
+            OpenGitHubButton.IsDefault = false;
+        }
     }
 
     public UpdateDecision Decision { get; private set; } = UpdateDecision.Later;
@@ -23,6 +30,12 @@ public partial class UpdateAvailableWindow : Window
     private void OpenGitHub_Click(object sender, RoutedEventArgs e)
     {
         Decision = UpdateDecision.OpenReleasePage;
+        DialogResult = true;
+    }
+
+    private void UpdateNow_Click(object sender, RoutedEventArgs e)
+    {
+        Decision = UpdateDecision.InstallNow;
         DialogResult = true;
     }
 
